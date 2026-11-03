@@ -319,4 +319,28 @@ server.registerTool(
   (args) => reply(patient("flow_captions", core.captions(args))),
 );
 
+server.registerTool(
+  "flow_budget",
+  {
+    title: "Daily credit budget",
+    description:
+      "Read or set the daily credit limit that every paid tool obeys (default 50, a free account's daily credits). Quoted scenes are skipped before anything is spent if they would go over it; edits and continuations, which Flow never quotes, are refused unless a typical cost (40 and 15) still fits. Spending is recorded from Flow's own quotes and balance changes. 'Today' follows this computer's date.",
+    inputSchema: shapes.budget,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  (args) => reply(core.budget(args)),
+);
+
+server.registerTool(
+  "flow_vertical",
+  {
+    title: "Make a vertical version for Shorts",
+    description:
+      "Turn a landscape video into a 1080x1920 vertical one for YouTube Shorts, Reels and TikTok, on this computer with FFmpeg (no credits). blur keeps the whole picture with a blurred fill above and below; crop fills the screen with the centre of the frame. For captions, run flow_captions on the vertical file afterwards. Saves <name>-vertical.mp4.",
+    inputSchema: shapes.vertical,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  (args) => reply(patient("flow_vertical", core.vertical(args))),
+);
+
 await server.connect(new StdioServerTransport());

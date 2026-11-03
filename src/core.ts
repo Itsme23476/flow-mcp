@@ -1,8 +1,10 @@
 import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { z } from "zod";
 import { assemble, localVoices, speakLocally, voiceTrack } from "./assemble.js";
+import { budget, ESTIMATE, left, record, setLimit } from "./budget.js";
+import { vertical } from "./vertical.js";
 import { GEMINI_VOICES, geminiKey, saveGeminiKey, speakWithGemini } from "./gemini.js";
 import { extractLastFrame } from "./chain.js";
 import { burnCaptions, captionedName, captionSetup, previewCaptions, transcribe } from "./captions.js";
@@ -261,6 +263,23 @@ export const shapes = {
     voice: z.string().optional().describe("Flow voice name, e.g. 'Charon' (male, informative) or 'Aoede' (female, breezy)."),
   },
   techniques: { category: z.enum(["camera", "product", "transition", "image"]).optional() },
+  budget: {
+    daily_limit: z
+      .number()
+      .int()
+      .min(0)
+      .max(100_000)
+      .optional()
+      .describe("New daily credit limit. Leave it out to just read today's spending. A free Google account gets 50 a day."),
+  },
+  vertical: {
+    video: z.string().min(1).describe("Absolute path of a landscape video on this computer, such as a film made with flow_assemble."),
+    mode: z
+      .enum(["blur", "crop"])
+      .default("blur")
+      .describe("blur: the whole wide picture in the middle with a blurred, enlarged copy filling above and below; nothing is cut off and the bands suit captions. crop: the centre of the frame at full height; fills the screen but loses the sides."),
+    output_name: z.string().optional().describe("File name without extension. Default: <video name>-vertical."),
+  },
 };
 
 type Args<K extends keyof typeof shapes> = z.infer<z.ZodObject<(typeof shapes)[K]>>;
@@ -307,6 +326,8 @@ export interface Core {
   caption_preview(a: Args<"caption_preview">): Promise<unknown>;
   captions(a: Args<"captions">): Promise<unknown>;
   caption_setup(): Promise<unknown>;
+  budget(a: Args<"budget">): Promise<unknown>;
+  vertical(a: Args<"vertical">): Promise<unknown>;
 }
 
 // Flow's own voices: still offered when giving a character a voice, but narration no longer goes through Flow.
@@ -343,15 +364,46 @@ export class LocalCore implements Core {
       if (!clip) throw new Error(`chain_previous: the previous scene (${chain_from}) produced no video, so this scene was skipped.`);
       job.params.first_frame = await extractLastFrame(clip);
     }
-    if (job.params.continue_from) return runContinue(job);
     if (job.params.agent_scenes) return runAgentBatch(job);
-    if (job.params.edit_asset) return runEdit(job);
-    return runGeneration(job);
+    // Daily budget: quoted scenes get their cap lowered to what is left today, so Flow's own quote enforces it before
+    // anything is spent; edits and continuations show no quote, so a typical cost is reserved up front instead.
+    const remaining = left();
+    const unquoted = job.params.continue_from ? ESTIMATE.continue : job.params.edit_asset ? ESTIMATE.edit : 0;
+    if (unquoted > remaining) {
+      throw new Error(`Daily budget: only ${remaining} credits left today and this usually costs about ${unquoted}. Nothing was generated. Raise it with flow_budget if you mean to.`);
+    }
+    const capped = job.params.type === "video" && !unquoted && remaining < job.params.max_credits;
+    if (capped) job.params.max_credits = remaining;
+    try {
+      const files = await (job.params.continue_from ? runContinue(job) : job.params.edit_asset ? runEdit(job) : runGeneration(job));
+      record(job.id, job.params.prompt, job.credits ?? 0);
+      return files;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Nothing was spent when Flow refused before generating; anything later may have been charged, so count it.
+      if (!/Nothing was generated/.test(msg)) record(job.id, job.params.prompt, job.credits ?? 0);
+      if (capped && /above max_credits/.test(msg)) throw new Error(`Daily budget: Flow quotes ${job.credits} credits and only ${remaining} are left today. Nothing was generated. Raise it with flow_budget if you mean to.`);
+      throw err;
+    }
   });
 
   async status({ detailed }: Args<"status">) {
     const flow = await getFlowState(detailed && !this.queue.busy);
-    return { flow, pacing: this.queue.pausedReason, output_root: OUTPUT_ROOT, jobs: this.queue.list().map(jobView) };
+    const { entries, ...spend } = budget();
+    return { flow, budget: spend, pacing: this.queue.pausedReason, output_root: OUTPUT_ROOT, jobs: this.queue.list().map(jobView) };
+  }
+
+  async budget({ daily_limit }: Args<"budget">) {
+    return daily_limit === undefined ? budget() : setLimit(daily_limit);
+  }
+
+  async vertical({ video, mode, output_name }: Args<"vertical">) {
+    // Same rule as captions: next to the video when it is already one of the user's films, otherwise a Vertical folder.
+    const rel = relative(OUTPUT_ROOT, dirname(video));
+    const dir = rel !== "" && !rel.startsWith("..") && !isAbsolute(rel) ? dirname(video) : projectDir("Vertical");
+    mkdirSync(dir, { recursive: true });
+    const name = (output_name ?? `${basename(video).replace(/\.\w+$/, "")}-vertical`).replace(/[^\w.-]+/g, "_");
+    return vertical(video, mode, join(dir, `${name}.mp4`));
   }
 
   async generate({ project, scenes }: Args<"generate">) {

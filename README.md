@@ -1,5 +1,14 @@
 # flow-mcp
 
+> **This is an upgraded fork of [GTAI-1/flow-mcp](https://github.com/GTAI-1/flow-mcp) by Guney Topcu.** All credit for
+> the original tool goes to him. This version adds:
+>
+> - **A daily credit budget** (`flow_budget`): every paid tool obeys one daily limit (default 50, a free account's
+>   credits), including edits and continuations that Flow never quotes a price for.
+> - **Vertical Shorts** (`flow_vertical`): turn a wide film into 1080x1920 for YouTube Shorts, Reels and TikTok,
+>   free, on your own computer.
+> - **A one-prompt film skill** (`skills/make-film`): type one sentence in Claude Code and it makes the whole film.
+
 Drive **Google Flow** (flow.google.com) from Claude, Codex or any other MCP app, or from a local control
 panel, using Flow's own credits (free with any Google account: 50 a day), not the pay-per-use video API.
 
@@ -37,7 +46,7 @@ headless or asleep mid-run.
 ## Install
 
 ```bash
-git clone https://github.com/GTAI-1/flow-mcp.git
+git clone https://github.com/Itsme23476/flow-mcp.git
 cd flow-mcp
 npm install
 npm run build
@@ -134,6 +143,20 @@ Nothing below costs a credit until step 4, and the assistant asks before spendin
 
 ---
 
+## Make a whole film from one sentence
+
+`skills/make-film` is a Claude Code skill that runs the whole process for you: it asks five questions with
+defaults, then does the character, the free stills, the clips, the narration, the cut and (if you want) a
+captioned vertical Short. It stops three times for your OK: the stills, the film, and the caption words.
+
+```bash
+mkdir -p ~/.claude/skills && cp -r skills/make-film ~/.claude/skills/
+```
+
+Then in Claude Code: *"Make a 30-second film about a lighthouse keeper who befriends a seagull."*
+
+---
+
 ## The control panel
 
 The same features, without an AI assistant in the loop:
@@ -206,6 +229,8 @@ agree on what is running. That API listens on 127.0.0.1 only and needs a per-run
 | `flow_voices` | Narrator voices available, and whether a Google key is set up |
 | `flow_captions` | Burn spoken-word captions into any video, landscape or vertical, in one of five styles, at any height and size, in normal, capital or lowercase letters, in about 100 languages; returns the transcript so a misheard word can be fixed and the call repeated (local whisper.cpp, Chrome and FFmpeg, no credits) |
 | `flow_transcribe` | Hear the words in any video or audio on your computer, with each word's start and end time (local whisper.cpp, free) |
+| `flow_budget` | Read or set the daily credit limit every paid tool obeys (default 50). Quoted scenes are skipped before spending if they would go over it; edits and continuations, which show no quote, need their typical cost (40 / 15) to fit |
+| `flow_vertical` | Turn a wide film into a 1080x1920 vertical one for Shorts, Reels and TikTok: `blur` (whole picture, blurred fill) or `crop` (centre crop). Local FFmpeg, no credits |
 | `flow_assemble` | Join clips into one MP4 (a project's clips, or any you list, in order) with optional music and voiceover, and separate volume for the clips' own sound. A voiceover can also be built line by line (`voice_lines`), each line cut from a take and placed at its own moment, for narration timed to on-screen titles (local FFmpeg, no credits) |
 
 **Continuity between shots:** `chain_previous` (this clip starts on the last frame of the previous

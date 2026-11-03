@@ -3,7 +3,8 @@ export const PLAYBOOK = {
   workflow: [
     "Call flow_status first. If it returns a hint, relay it to the user and stop.",
     "Plan the whole piece as scenes of one shot each, then send them in ONE flow_generate call so file numbering and chaining work.",
-    "Tell the user the expected credit total before queueing anything that costs credits.",
+    "Tell the user the expected credit total before queueing anything that costs credits, and check it fits flow_status's budget.left_today (flow_budget changes the daily limit).",
+    "For a Short, Reel or TikTok made from a wide film: flow_vertical (blur keeps the whole picture), then flow_captions on the vertical file.",
     "Call flow_wait repeatedly until finished is true; scenes run one at a time with 25-70 s pauses.",
     "To put the spoken words on screen: FIRST call flow_transcribe on the film (with `language`), show the user the words, flag anything that looks misheard (names especially, and words run together), propose the fixes, and wait for the user to confirm or correct them. Only then call flow_captions once, passing the agreed words as `text` (style bold for short-form, clean for subtitles).",
     "If an image batch finishes with \"still failed: scene ...\" in its note, call flow_retry with its job id: only those images are made again, under their own scene numbers.",
