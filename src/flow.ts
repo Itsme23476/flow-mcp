@@ -775,8 +775,13 @@ export async function runGeneration(job: Job): Promise<string[]> {
   const s = job.params;
 
   await ensureProjectGrid(page);
-  const agent = page.getByRole("button", { name: "Agent", exact: true });
-  if ((await agent.getAttribute("aria-pressed")) === "true") await agent.click();
+  // Flow (seen 2026-11-05) can open a project in agent mode with its session panel covering the composer; the
+  // panel hides the Agent toggle and the Settings trigger, so close it before switching agent mode off.
+  if (await page.getByRole("button", { name: "Start new session" }).isVisible().catch(() => false)) {
+    await page.getByRole("button", { name: "Close", exact: true }).click({ timeout: 5000 }).catch(() => {});
+    await pause(page, 1000);
+  }
+  await setAgentMode(page, false);
   const clear = page.getByRole("button", { name: "Clear prompt" });
   if (await clear.isVisible().catch(() => false)) await clear.click();
 
