@@ -243,6 +243,9 @@ export async function freshMedia(page: Page, before: string[], kind?: MediaKind)
         id: idOf(t),
         kind: t.querySelector("flow-video-tile") ? "video" : t.querySelector("flow-image-tile") ? "image" : "other",
         label: t.getAttribute("aria-label") ?? "",
+        // A failed generation keeps its <flow-image-tile> and wraps a <flow-error-tile> inside it (seen 2026-11-06,
+        // "We noticed some unusual activity"); taking it as the result ended in "tile menu has no Download item".
+        failed: !!t.querySelector("flow-error-tile"),
         // For the first seconds after Start generation, before any "NN%" shows, a new video tile is titled with the
         // prompt itself and has no thumbnail; then it takes a short title of Flow's own and counts up; finished, it
         // has its thumbnail (watched live 2026-10-16, a 4 s clip: prompt title at 9 s, "0%" at 12 s, 100% at 34 s,
@@ -255,7 +258,7 @@ export async function freshMedia(page: Page, before: string[], kind?: MediaKind)
     },
     TILE_ID_JS,
   );
-  const ours = tiles.filter((t) => t.id && !before.includes(t.id) && !t.label.startsWith("fm-") && !t.busy && (!kind || t.kind === kind));
+  const ours = tiles.filter((t) => t.id && !before.includes(t.id) && !t.label.startsWith("fm-") && !t.busy && !t.failed && (!kind || t.kind === kind));
   return [...new Set(ours.map((t) => t.id!))];
 }
 
@@ -285,6 +288,15 @@ async function waitForNewMedia(page: Page, before: string[], count: number, time
     const errors = progress.length ? 0 : await newErrorTiles(page, before);
     if (!errors) continue;
     failures += errors;
+    const reason = await page
+      .locator("flow-error-tile")
+      .first()
+      .innerText()
+      .then((t) => t.split("\n").map((l) => l.trim()).find((l) => l.length > 20) ?? "", () => "");
+    // Google's automation check: retrying straight into it only digs deeper, so stop and say so.
+    if (/unusual activity/i.test(reason)) {
+      throw new Error(`Flow refused this generation: "${reason}" Nothing was charged. Wait a while before generating again.`);
+    }
     if (retriesLeft > 0) {
       retriesLeft--;
       if (job) job.progress = "Flow failed, retrying";
@@ -292,7 +304,7 @@ async function waitForNewMedia(page: Page, before: string[], count: number, time
       if (retried) continue;
     }
     if (fresh.length) return fresh;
-    throw new Error(`Flow failed this generation ${failures} time(s) ("Sorry, this image/video failed to generate"). Nothing was charged. Try again later or reword the prompt.`);
+    throw new Error(`Flow failed this generation ${failures} time(s) ("${reason || "Sorry, this image/video failed to generate"}"). Nothing was charged. Try again later or reword the prompt.`);
   }
   throw new Error(`Timed out after ${Math.round(timeoutMs / 1000)}s waiting for Flow to finish.`);
 }
@@ -305,6 +317,18 @@ async function openSettings(page: Page): Promise<void> {
     await probe.waitFor({ state: "visible", timeout: 3000 }).catch(() => {});
   }
   if (!(await probe.isVisible().catch(() => false))) throw new Error("Could not open Flow's generation settings popover.");
+}
+
+// One Escape sometimes only closes something smaller inside the popover (seen 2026-11-06), leaving it open over the
+// prompt box, which then swallowed the next click. Confirm it is gone: Escape again, then the trigger, which toggles it.
+async function closeSettings(page: Page): Promise<void> {
+  const probe = page.getByRole("radio", { name: "Image", exact: true });
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (!(await probe.isVisible().catch(() => false))) return;
+    if (attempt < 2) await page.keyboard.press("Escape");
+    else await settingsTrigger(page).click({ timeout: 5000 }).catch(() => {});
+    await pause(page, 500);
+  }
 }
 
 async function pickRadio(page: Page, name: string | RegExp): Promise<void> {
@@ -374,8 +398,7 @@ async function applySettings(page: Page, job: Job): Promise<number> {
   await pause(page, 600);
   const costText = await page.getByRole("link", { name: /credits?$/ }).innerText();
   const cost = Number(costText.match(/\d+/)?.[0] ?? NaN);
-  await page.keyboard.press("Escape");
-  await pause(page, 400);
+  await closeSettings(page);
   if (Number.isNaN(cost)) throw new Error(`Could not read the credit cost from Flow ("${costText}").`);
   return cost;
 }
@@ -408,7 +431,7 @@ async function uploadAsset(page: Page, job: Job, file: string, label: string): P
   const chooser = page.waitForEvent("filechooser", { timeout: 10_000 });
   await page.getByRole("menuitem", { name: "Upload", exact: true }).click();
   await (await chooser).setFiles(staged);
-  await waitForUpload(page, name, 90_000);
+  await waitForUpload(page, name, 180_000);
   return name;
 }
 
